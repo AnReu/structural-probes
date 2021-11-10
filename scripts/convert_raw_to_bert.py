@@ -29,6 +29,13 @@ if args.bert_model == 'base':
   model = BertModel.from_pretrained('bert-base-cased')
   LAYER_COUNT = 12
   FEATURE_COUNT = 768
+elif args.bert_model == 'arqbase':
+  # base-17-05-2021-12:57:27-from_pretrained-900k-steps
+  tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+  print('using custom model.')
+  model = BertModel.from_pretrained('base-17-05-2021-12:57:27-from_pretrained-900k-steps')
+  LAYER_COUNT = 12
+  FEATURE_COUNT = 768
 elif args.bert_model == 'large':
   tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
   model = BertModel.from_pretrained('bert-large-cased')
@@ -38,7 +45,9 @@ else:
   raise ValueError("BERT model must be base or large")
 
 model.eval()
-
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model.to(device)
+print('device', device)
 with h5py.File(args.output_path, 'w') as fout:
   for index, line in enumerate(open(args.input_path)):
     line = line.strip() # Remove trailing characters
@@ -48,12 +57,12 @@ with h5py.File(args.output_path, 'w') as fout:
     segment_ids = [1 for x in tokenized_text]
   
     # Convert inputs to PyTorch tensors
-    tokens_tensor = torch.tensor([indexed_tokens])
-    segments_tensors = torch.tensor([segment_ids])
+    tokens_tensor = torch.tensor([indexed_tokens]).to(device)
+    segments_tensors = torch.tensor([segment_ids]).to(device)
   
     with torch.no_grad():
         encoded_layers, _ = model(tokens_tensor, segments_tensors)
     dset = fout.create_dataset(str(index), (LAYER_COUNT, len(tokenized_text), FEATURE_COUNT))
-    dset[:,:,:] = np.vstack([np.array(x) for x in encoded_layers])
+    dset[:,:,:] = np.vstack([np.array(x.cpu()) for x in encoded_layers])
   
 
