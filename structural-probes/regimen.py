@@ -21,6 +21,7 @@ class ProbeRegimen:
     self.args = args
     self.max_epochs = args['probe_training']['epochs']
     self.params_path = os.path.join(args['reporting']['root'], args['probe']['params_path'])
+    self.lr = args['probe_training']['lr'] if 'lr' in args['probe_training'] else 0.001
 
   def set_optimizer(self, probe):
     """Sets the optimizer and scheduler for the training regimen.
@@ -28,10 +29,10 @@ class ProbeRegimen:
     Args:
       probe: the probe PyTorch model the optimizer should act on.
     """
-    self.optimizer = optim.Adam(probe.parameters(), lr=0.001)
+    self.optimizer = optim.Adam(probe.parameters(), lr=self.lr)
     self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1,patience=0)
 
-  def train_until_convergence(self, probe, model, loss, train_dataset, dev_dataset):
+  def train_until_convergence(self, probe, model, loss, train_dataset, dev_dataset, exp):
     """ Trains a probe until a convergence criterion is met.
 
     Trains until loss on the development set does not improve by more than epsilon
@@ -49,45 +50,51 @@ class ProbeRegimen:
     self.set_optimizer(probe)
     min_dev_loss = sys.maxsize
     min_dev_loss_epoch = -1
-    for epoch_index in tqdm(range(self.max_epochs), desc='[training]'):
-      epoch_train_loss = 0
-      epoch_dev_loss = 0
-      epoch_train_epoch_count = 0
-      epoch_dev_epoch_count = 0
-      epoch_train_loss_count = 0
-      epoch_dev_loss_count = 0
-      for batch in tqdm(train_dataset, desc='[training batch]'):
-        probe.train()
-        self.optimizer.zero_grad()
-        observation_batch, label_batch, length_batch, _ = batch
-        word_representations = model(observation_batch)
-        predictions = probe(word_representations)
-        batch_loss, count = loss(predictions, label_batch, length_batch)
-        batch_loss.backward()
-        epoch_train_loss += batch_loss.detach().cpu().numpy()*count.detach().cpu().numpy()
-        epoch_train_epoch_count += 1
-        epoch_train_loss_count += count.detach().cpu().numpy()
-        self.optimizer.step()
-      for batch in tqdm(dev_dataset, desc='[dev batch]'):
-        self.optimizer.zero_grad()
-        probe.eval()
-        observation_batch, label_batch, length_batch, _ = batch
-        word_representations = model(observation_batch)
-        predictions = probe(word_representations)
-        batch_loss, count = loss(predictions, label_batch, length_batch)
-        epoch_dev_loss += batch_loss.detach().cpu().numpy()*count.detach().cpu().numpy()
-        epoch_dev_loss_count += count.detach().cpu().numpy()
-        epoch_dev_epoch_count += 1
-      self.scheduler.step(epoch_dev_loss)
-      tqdm.write('[epoch {}] Train loss: {}, Dev loss: {}'.format(epoch_index, epoch_train_loss/epoch_train_loss_count, epoch_dev_loss/epoch_dev_loss_count))
-      if epoch_dev_loss / epoch_dev_loss_count < min_dev_loss - 0.0001:
-        torch.save(probe.state_dict(), self.params_path)
-        min_dev_loss = epoch_dev_loss / epoch_dev_loss_count
-        min_dev_loss_epoch = epoch_index
-        tqdm.write('Saving probe parameters')
-      elif min_dev_loss_epoch < epoch_index - 4:
-        tqdm.write('Early stopping')
-        break
+    with exp.train():
+      step = 0
+      for epoch_index in tqdm(range(self.max_epochs), desc='[training]'):
+        epoch_train_loss = 0
+        epoch_dev_loss = 0
+        epoch_train_epoch_count = 0
+        epoch_dev_epoch_count = 0
+        epoch_train_loss_count = 0
+        epoch_dev_loss_count = 0
+        for batch in tqdm(train_dataset, desc='[training batch]'):
+          probe.train()
+          self.optimizer.zero_grad()
+          observation_batch, label_batch, length_batch, _ = batch
+          word_representations = model(observation_batch)
+          predictions = probe(word_representations)
+          batch_loss, count = loss(predictions, label_batch, length_batch)
+          batch_loss.backward()
+          epoch_train_loss += batch_loss.detach().cpu().numpy()*count.detach().cpu().numpy()
+          epoch_train_epoch_count += 1
+          epoch_train_loss_count += count.detach().cpu().numpy()
+          self.optimizer.step()
+          exp.log_metric('train_batch_loss', batch_loss, step=step)
+          step += 1
+        for batch in tqdm(dev_dataset, desc='[dev batch]'):
+          self.optimizer.zero_grad()
+          probe.eval()
+          observation_batch, label_batch, length_batch, _ = batch
+          word_representations = model(observation_batch)
+          predictions = probe(word_representations)
+          batch_loss, count = loss(predictions, label_batch, length_batch)
+          epoch_dev_loss += batch_loss.detach().cpu().numpy()*count.detach().cpu().numpy()
+          epoch_dev_loss_count += count.detach().cpu().numpy()
+          epoch_dev_epoch_count += 1
+        exp.log_metric('dev_loss', epoch_dev_loss/epoch_dev_loss_count, step=step)
+        exp.log_metric('epoch_train_loss', epoch_train_loss/epoch_train_loss_count, step=step)
+        self.scheduler.step(epoch_dev_loss)
+        tqdm.write('[epoch {}] Train loss: {}, Dev loss: {}'.format(epoch_index, epoch_train_loss/epoch_train_loss_count, epoch_dev_loss/epoch_dev_loss_count))
+        if epoch_dev_loss / epoch_dev_loss_count < min_dev_loss - 0.0001:
+          torch.save(probe.state_dict(), self.params_path)
+          min_dev_loss = epoch_dev_loss / epoch_dev_loss_count
+          min_dev_loss_epoch = epoch_index
+          tqdm.write('Saving probe parameters')
+        elif min_dev_loss_epoch < epoch_index - 4:
+          tqdm.write('Early stopping')
+          break
 
   def predict(self, probe, model, dataset):
     """ Runs probe to compute predictions on a dataset.

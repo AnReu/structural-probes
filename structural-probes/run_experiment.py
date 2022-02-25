@@ -1,4 +1,6 @@
 """Loads configuration yaml and runs an experiment."""
+from comet_ml import Experiment
+
 from argparse import ArgumentParser
 import os
 from datetime import datetime
@@ -107,7 +109,7 @@ def choose_model_class(args):
     raise ValueError("Unknown model type: {}".format(
       args['model']['model_type']))
 
-def run_train_probe(args, probe, dataset, model, loss, reporter, regimen):
+def run_train_probe(args, probe, dataset, model, loss, reporter, regimen, exp):
   """Trains a structural probe according to args.
 
   Args:
@@ -125,7 +127,7 @@ def run_train_probe(args, probe, dataset, model, loss, reporter, regimen):
     None; causes probe parameters to be written to disk.
   """
   regimen.train_until_convergence(probe, model, loss,
-      dataset.get_train_dataloader(), dataset.get_dev_dataloader())
+      dataset.get_train_dataloader(), dataset.get_dev_dataloader(), exp)
 
 
 def run_report_results(args, probe, dataset, model, loss, reporter, regimen):
@@ -168,7 +170,9 @@ def execute_experiment(args, train_probe, report_results):
 
   task = task_class()
   expt_dataset = dataset_class(args, task)
+  print('finished dataset')
   expt_reporter = reporter_class(args)
+  print('finished reporter')
   expt_probe = probe_class(args)
   expt_model = model_class(args)
   expt_regimen = regimen_class(args)
@@ -176,7 +180,9 @@ def execute_experiment(args, train_probe, report_results):
 
   if train_probe:
     print('Training probe...')
-    run_train_probe(args, expt_probe, expt_dataset, expt_model, expt_loss, expt_reporter, expt_regimen)
+    experiment = Experiment(api_key="9vHrrq52eozKPIiSBx0fSuwnb", project_name="structural_probes")
+    experiment.log_parameters(args)
+    run_train_probe(args, expt_probe, expt_dataset, expt_model, expt_loss, expt_reporter, expt_regimen, experiment)
   if report_results:
     print('Reporting results of trained probe...')
     run_report_results(args, expt_probe, expt_dataset, expt_model, expt_loss, expt_reporter, expt_regimen)
