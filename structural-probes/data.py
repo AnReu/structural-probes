@@ -32,9 +32,13 @@ class SimpleDataset:
     self.vocab = vocab
     self.observation_class = self.get_observation_class(self.args['dataset']['observation_fieldnames'])
     self.train_obs, self.dev_obs, self.test_obs = self.read_from_disk()
+    print('read embeddings from disk')
     self.train_dataset = ObservationIterator(self.train_obs, task)
+    print('loaded train iterator, len:', len(self.train_dataset))
     self.dev_dataset = ObservationIterator(self.dev_obs, task)
+    print('loaded dev iterator')
     self.test_dataset = ObservationIterator(self.test_obs, task)
+    print('loaded test iterator')
 
   def read_from_disk(self):
     '''Reads observations from conllx-formatted files
@@ -370,20 +374,33 @@ class BERTDataset(SubwordDataset):
           exits immediately.
     '''
     if subword_tokenizer == None:
-      try:
-        from pytorch_pretrained_bert import BertTokenizer
-        if self.args['model']['hidden_dim'] == 768:
-          subword_tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-          print('Using BERT-base-cased tokenizer to align embeddings with PTB tokens')
-        elif self.args['model']['hidden_dim'] == 1024:
-          subword_tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
-          print('Using BERT-large-cased tokenizer to align embeddings with PTB tokens')
+      if 'tokenizer_path' in self.args['model']:
+        if 'albert' in self.args['model']['tokenizer_path']:
+          from transformers import AlbertTokenizerFast
+          subword_tokenizer = AlbertTokenizerFast.from_pretrained(self.args['model']['tokenizer_path'])
+          print('Using Albert tokenzier:', self.args['model']['tokenizer_path'])
+        elif 'bert' in self.args['model']['tokenizer_path']:
+          from transformers import BertTokenizerFast
+          subword_tokenizer = BertTokenizerFast.from_pretrained(self.args['model']['tokenizer_path'])
+          print('Using custom bert tokizer:', self.args['model']['tokenizer_path'])
         else:
-          print("The heuristic used to choose BERT tokenizers has failed...")
+          print('Could not import custom tokenizer. Exiting...')
           exit()
-      except:
-        print('Couldn\'t import pytorch-pretrained-bert. Exiting...')
-        exit()
+      else:
+        try:
+          from transformers import BertTokenizer
+          if self.args['model']['hidden_dim'] == 768:
+            subword_tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+            print('Using BERT-base-cased tokenizer to align embeddings with PTB tokens')
+          elif self.args['model']['hidden_dim'] == 1024:
+            subword_tokenizer = BertTokenizer.from_pretrained('bert-large-cased')
+            print('Using BERT-large-cased tokenizer to align embeddings with PTB tokens')
+          else:
+            print("The heuristic used to choose BERT tokenizers has failed...")
+            exit()
+        except:
+          print('Couldn\'t import pytorch-pretrained-bert. Exiting...')
+          exit()
     hf = h5py.File(filepath, 'r')
     indices = list(hf.keys())
     single_layer_features_list = []
@@ -391,7 +408,7 @@ class BERTDataset(SubwordDataset):
       observation = observations[index]
       feature_stack = hf[str(index)]
       single_layer_features = feature_stack[elmo_layer]
-      tokenized_sent = subword_tokenizer.wordpiece_tokenizer.tokenize('[CLS] ' + ' '.join(observation.sentence) + ' [SEP]')
+      tokenized_sent = subword_tokenizer.tokenize('[CLS] ' + ' '.join(observation.sentence) + ' [SEP]')
       untokenized_sent = observation.sentence
       untok_tok_mapping = self.match_tokenized_to_untokenized(tokenized_sent, untokenized_sent)
       assert single_layer_features.shape[0] == len(tokenized_sent)
